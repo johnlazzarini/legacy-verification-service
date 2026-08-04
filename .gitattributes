@@ -1,0 +1,8 @@
+# Normalize line endings to LF in the repository and in working trees.
+#
+# Load-bearing, not cosmetic. This tree is cloned by a Cursor agent onto a
+# self-hosted worker whose git configuration we do not control. Checked out with
+# CRLF, an agent that rewrites a file with LF produces a diff with mixed endings,
+# and the recorded patch no longer reapplies to a fresh export — which breaks
+# replay, the recorded-run test fixture, and the demo's artifact walk.
+* text=auto eol=lf
