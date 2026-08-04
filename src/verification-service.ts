@@ -32,10 +32,15 @@ export async function submitVerification(
   input: SubmitVerificationInput,
 ): Promise<SubmitVerificationOutput> {
   const now = input.now ?? (() => new Date());
-  const verification = await createVerification(client, {
-    subjectId: input.subjectId,
-    documentType: input.documentType,
-  });
+  const idempotencyKey = randomUUID();
+  const verification = await createVerification(
+    client,
+    {
+      subjectId: input.subjectId,
+      documentType: input.documentType,
+    },
+    idempotencyKey,
+  );
 
   const existing = getAccountBySubject(db, input.subjectId);
   const account: Account = {

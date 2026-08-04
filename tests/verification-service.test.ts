@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { getAccountBySubject, openDb } from "../src/db.js";
+import {
+  createVerification,
+  IdempotencyConflictError,
+  VerificationClientError,
+} from "../src/v1-client.js";
 import { submitVerification } from "../src/verification-service.js";
 
 function fakeFetch(result: unknown, status = 202): typeof fetch {
@@ -68,4 +73,89 @@ test("submitVerification does not map PENDING acceptance to REJECTED", async () 
   assert.notEqual(account.status, "VERIFIED");
   assert.equal(account.status, "PENDING");
   db.close();
+});
+
+test("submitVerification sends Idempotency-Key on create request", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "legacy-svc-"));
+  const db = openDb(join(dir, "test.sqlite"));
+  let idempotencyKey: string | undefined;
+
+  await submitVerification(
+    db,
+    {
+      baseUrl: "https://api.example.com/v1",
+      fetchImpl: (async (_url, init) => {
+        const headers = init?.headers as Record<string, string>;
+        idempotencyKey = headers["Idempotency-Key"];
+        return new Response(
+          JSON.stringify({ verificationId: "ver_3", status: "PENDING" }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch,
+    },
+    {
+      subjectId: "sub_3",
+      documentType: "national_id",
+      now: () => new Date("2026-07-30T12:00:00.000Z"),
+    },
+  );
+
+  assert.ok(idempotencyKey);
+  assert.match(idempotencyKey!, /^[0-9a-f-]{36}$/);
+  db.close();
+});
+
+test("createVerification throws IdempotencyConflictError on 409", async () => {
+  await assert.rejects(
+    () =>
+      createVerification(
+        {
+          baseUrl: "https://api.example.com/v1",
+          fetchImpl: fakeFetch(
+            {
+              type: "about:blank",
+              title: "Conflict",
+              status: 409,
+              detail: "Duplicate idempotency key",
+            },
+            409,
+          ),
+        },
+        { subjectId: "sub_1", documentType: "passport" },
+        "idem-key",
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof IdempotencyConflictError);
+      assert.equal(err.problem.detail, "Duplicate idempotency key");
+      return true;
+    },
+  );
+});
+
+test("createVerification throws VerificationClientError with ProblemDetails on non-202", async () => {
+  await assert.rejects(
+    () =>
+      createVerification(
+        {
+          baseUrl: "https://api.example.com/v1",
+          fetchImpl: fakeFetch(
+            {
+              type: "about:blank",
+              title: "Bad Request",
+              status: 400,
+              detail: "Invalid document type",
+            },
+            400,
+          ),
+        },
+        { subjectId: "sub_1", documentType: "passport" },
+        "idem-key",
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof VerificationClientError);
+      assert.equal(err.status, 400);
+      assert.equal(err.problem.detail, "Invalid document type");
+      return true;
+    },
+  );
 });
