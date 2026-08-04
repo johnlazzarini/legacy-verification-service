@@ -1,5 +1,5 @@
 /**
- * Handwritten HTTP client for Identity Verification API v1.
+ * Handwritten HTTP client for Identity Verification API v2 acknowledge contract.
  * Seeded call site for repository impact analysis.
  */
 
@@ -11,11 +11,30 @@ export interface VerificationRequest {
   metadata?: Record<string, unknown>;
 }
 
-export interface VerificationResult {
+export interface VerificationAccepted {
   verificationId: string;
-  status: "PASS" | "FAIL";
-  decidedAt: string;
-  reasonCode?: string;
+  status: "PENDING";
+}
+
+export interface ProblemDetails {
+  type?: string;
+  title?: string;
+  status?: number;
+  detail?: string;
+  instance?: string;
+  [key: string]: unknown;
+}
+
+export class VerificationClientError extends Error {
+  readonly status: number;
+  readonly problem?: ProblemDetails;
+
+  constructor(message: string, status: number, problem?: ProblemDetails) {
+    super(message);
+    this.name = "VerificationClientError";
+    this.status = status;
+    this.problem = problem;
+  }
 }
 
 export interface V1ClientOptions {
@@ -25,23 +44,44 @@ export interface V1ClientOptions {
 }
 
 /**
- * Calls POST /verifications and expects a synchronous final decision (200).
+ * Calls POST /verifications with Idempotency-Key and expects HTTP 202 acknowledgement.
  */
 export async function createVerification(
   options: V1ClientOptions,
   request: VerificationRequest,
-): Promise<VerificationResult> {
+  idempotencyKey: string,
+): Promise<VerificationAccepted> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const response = await fetchImpl(`${options.baseUrl}/verifications`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
     body: JSON.stringify(request),
   });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`v1 verification failed: ${response.status} ${body}`);
+  if (response.status === 202) {
+    return (await response.json()) as VerificationAccepted;
   }
 
-  return (await response.json()) as VerificationResult;
+  const contentType = response.headers.get("content-type") ?? "";
+  let problem: ProblemDetails | undefined;
+  let bodyText = "";
+  if (contentType.includes("application/json")) {
+    try {
+      problem = (await response.json()) as ProblemDetails;
+    } catch {
+      bodyText = "";
+    }
+  } else {
+    bodyText = await response.text();
+  }
+
+  const detail = problem?.detail ?? problem?.title ?? bodyText;
+  throw new VerificationClientError(
+    `verification create failed: ${response.status} ${detail}`,
+    response.status,
+    problem,
+  );
 }
