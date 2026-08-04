@@ -1,6 +1,10 @@
 import Database from "better-sqlite3";
 
-export type AccountStatus = "UNVERIFIED" | "VERIFIED" | "REJECTED";
+export type AccountStatus =
+  | "UNVERIFIED"
+  | "PENDING"
+  | "VERIFIED"
+  | "REJECTED";
 
 export interface Account {
   id: string;
