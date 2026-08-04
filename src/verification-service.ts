@@ -9,7 +9,7 @@ import {
   createVerification,
   type DocumentType,
   type V1ClientOptions,
-  type VerificationResult,
+  type VerificationAccepted,
 } from "./v1-client.js";
 
 export interface SubmitVerificationInput {
@@ -20,12 +20,11 @@ export interface SubmitVerificationInput {
 
 export interface SubmitVerificationOutput {
   account: Account;
-  verification: VerificationResult;
+  verification: VerificationAccepted;
 }
 
 /**
- * Synchronous "call then decide" path — the seeded coupling that v2 breaks.
- * Business logic runs immediately on the v1 final response.
+ * Acknowledge-first submit path — persists PENDING until webhook completion.
  */
 export async function submitVerification(
   db: Database.Database,
@@ -33,18 +32,21 @@ export async function submitVerification(
   input: SubmitVerificationInput,
 ): Promise<SubmitVerificationOutput> {
   const now = input.now ?? (() => new Date());
-  const verification = await createVerification(client, {
-    subjectId: input.subjectId,
-    documentType: input.documentType,
-  });
+  const idempotencyKey = randomUUID();
+  const verification = await createVerification(
+    client,
+    {
+      subjectId: input.subjectId,
+      documentType: input.documentType,
+    },
+    idempotencyKey,
+  );
 
-  // Immediate business decision from synchronous response fields.
-  const status = verification.status === "PASS" ? "VERIFIED" : "REJECTED";
   const existing = getAccountBySubject(db, input.subjectId);
   const account: Account = {
     id: existing?.id ?? randomUUID(),
     subjectId: input.subjectId,
-    status,
+    status: "PENDING",
     lastVerificationId: verification.verificationId,
     updatedAt: (input.now ? input.now() : now()).toISOString(),
   };
