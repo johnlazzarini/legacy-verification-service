@@ -11,11 +11,9 @@ export interface VerificationRequest {
   metadata?: Record<string, unknown>;
 }
 
-export interface VerificationResult {
+export interface VerificationAccepted {
   verificationId: string;
-  status: "PASS" | "FAIL";
-  decidedAt: string;
-  reasonCode?: string;
+  status: "PENDING";
 }
 
 export interface V1ClientOptions {
@@ -25,12 +23,12 @@ export interface V1ClientOptions {
 }
 
 /**
- * Calls POST /verifications and expects a synchronous final decision (200).
+ * Calls POST /verifications and expects an acceptance acknowledgement (202).
  */
 export async function createVerification(
   options: V1ClientOptions,
   request: VerificationRequest,
-): Promise<VerificationResult> {
+): Promise<VerificationAccepted> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const response = await fetchImpl(`${options.baseUrl}/verifications`, {
     method: "POST",
@@ -38,10 +36,10 @@ export async function createVerification(
     body: JSON.stringify(request),
   });
 
-  if (!response.ok) {
+  if (response.status !== 202) {
     const body = await response.text();
     throw new Error(`v1 verification failed: ${response.status} ${body}`);
   }
 
-  return (await response.json()) as VerificationResult;
+  return (await response.json()) as VerificationAccepted;
 }
